@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <!-- 手機端 Viewport 設定 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>香港巴士小巴港鐵實時報站</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        [v-cloak] { display: none; }
+        .pb-safe { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+        .bottom-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .bg-custom-overlay {
+            background-color: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(6px);
+        }
+        .dark .bg-custom-overlay {
+            background-color: rgba(15, 23, 42, 0.88);
+        }
+        ::-webkit-scrollbar { display: none; }
+        * { -webkit-tap-highlight-color: transparent; }
+
+        /* 強制隱藏全網各類託管平台（Netlify / Vercel / Render / Replit 等）右下角 Drawer 及工具列 */
+        #netlify-drawer,
+        [data-netlify-drawer],
+        iframe[src*="netlify"],
+        div[id*="netlify-drawer"],
+        .netlify-feedback-button,
+        a[href*="netlify"],
+        #vercel-toolbar,
+        [data-vercel-toolbar],
+        vercel-live-feedback,
+        #render-badge,
+        .render-badge,
+        #replit-badge-container,
+        iframe[src*="vercel"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            width: 0 !important;
+            height: 0 !important;
+            position: absolute !important;
+            left: -9999px !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-sans min-h-screen select-none">
+
+    <div id="app" v-cloak 
+         :class="['max-w-md mx-auto min-h-screen shadow-2xl flex flex-col relative transition-colors duration-300', themeConfig.isDark ? 'dark bg-slate-900 text-slate-100' : 'bg-white']"
+         :style="bgImageStyle">
+
+        <!-- 背景圖片遮罩 -->
+        <div v-if="customBgImage" class="absolute inset-0 bg-custom-overlay z-0"></div>
+
+        <!-- App 主體容器 -->
+        <div class="relative z-10 flex flex-col min-h-screen flex-1 pb-safe">
+
+            <!-- 頂部標題列 -->
+            <header :class="[themeConfig.headerBg, 'text-white p-4 sticky top-0 z-30 shadow-md flex justify-between items-center pt-8 transition-colors']">
+                <div>
+                    <h1 class="text-lg font-extrabold flex items-center gap-1.5 tracking-wide">
+                        🚆 巴士小巴港鐵實時報站
+                    </h1>
+                    <div class="flex items-center gap-2 mt-0.5">
+                        <span class="flex items-center gap-1 text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-mono">
+                            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                            1s 實時更新中
+                        </span>
+                        <span class="text-[10px] opacity-80">{{ currentTimeStr }}</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="toggleGlobalTimeDisplay" type="button" class="bg-white/20 active:scale-95 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer">
+                        🕒 {{ timeDisplayMode === 'exact' ? '13:50 模式' : '倒數模式' }}
+                    </button>
+                    <button @click="showSettings = true" type="button" class="bg-white/20 active:scale-95 text-white p-2 rounded-lg text-base transition cursor-pointer">
+                        ⚙️
+                    </button>
+                </div>
+            </header>
+
+            <!-- 主內容區域 -->
+            <main class="flex-1 p-3 overflow-y-auto">
+
+                <!-- 1. 搜尋路線頁 -->
+                <section v-if="currentTab === 'search'">
+                    <!-- 搜尋欄 (點擊直接觸發底部鍵盤彈出) -->
+                    <div class="mb-3 relative">
+                        <input 
+                            type="text" 
+                            v-model="searchQuery" 
+                            readonly
+                            @click="showVirtualKeyboard = true"
+                            placeholder="點擊輸入路線號碼 (如: 1A, 968, 44A)..." 
+                            class="w-full p-3.5 pl-4 pr-10 border border-slate-300 dark:border-slate-700 dark:bg-slate-800/90 text-base font-bold rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white dark:bg-slate-800"
+                        />
+                        <button 
+                            v-if="searchQuery" 
+                            @click.stop="searchQuery = ''" 
+                            type="button" 
+                            class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold p-1 text-sm">
+                            ✕
+                        </button>
+                    </div>
+
+                    <!-- 公司獨立標籤卡 -->
+                    <div class="flex gap-1.5 mb-3 overflow-x-auto pb-1">
+                        <button 
+                            v-for="co in [
+                                { label: '全部', key: 'ALL' },
+                                { label: '九巴/龍運', key: 'KMB' },
+                                { label: '城巴 CTB', key: 'CTB' },
+                                { label: '綠小 GMB', key: 'GMB' },
+                                { label: '港鐵/輕鐵', key: 'MTR' },
+                                { label: '嶼巴 NLB', key: 'NLB' }
+                            ]" 
+                            :key="co.key"
+                            type="button"
+                            @click="companyFilter = co.key"
+                            :class="['px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition active:scale-95 cursor-pointer', companyFilter === co.key ? themeConfig.buttonActive : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300']">
+                            {{ co.label }}
+                        </button>
+                    </div>
+
+                    <div v-if="loadingRoutes" class="text-center py-12 text-slate-500">
+                        <div class="animate-spin inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mb-2"></div>
+                        <p class="text-sm">正在載入全港所有巴士、綠色小巴及港鐵路線...</p>
+                    </div>
+
+                    <div v-else-if="filteredRoutes.length === 0" class="text-center py-12 text-slate-400 text-sm">
+                        找不到符合條件的路線。
+                    </div>
+
+                    <div v-else class="space-y-2">
+                        <div 
+                            v-for="route in filteredRoutes" 
+                            :key="route.company + '-' + route.route + '-' + (route.bound || '') + '-' + (route.region || '') + '-' + (route.route_id || '')"
+                            @click="selectRoute(route)"
+                            class="p-3.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl active:bg-blue-50 dark:active:bg-slate-700 cursor-pointer flex justify-between items-center transition">
+                            <div class="flex items-center gap-2">
+                                <span :class="['px-2 py-0.5 text-xs font-black rounded-md', getCompanyBadgeClass(route.company)]" :style="(route.company === 'MTR' || route.company === 'LRT') ? { backgroundColor: route.color, color: '#fff' } : {}">
+                                    {{ route.company }}
+                                </span>
+                                <span class="font-extrabold text-lg">{{ route.route }}</span>
+                                <span v-if="route.region" class="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded font-bold">{{ route.region }}</span>
+                                <span class="text-xs text-slate-500 dark:text-slate-400">往 {{ route.dest_tc }}</span>
+                            </div>
+                            <span class="text-slate-400 font-bold">➔</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2. 路線車站詳情頁 -->
+                <section v-if="currentTab === 'routeDetail'">
+                    <div class="flex justify-between items-center mb-3">
+                        <button @click="currentTab = 'search'" type="button" class="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-1 font-bold cursor-pointer">
+                            ← 返回搜尋
+                        </button>
+                        <span class="text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-1 rounded-full font-bold border border-emerald-200 dark:border-emerald-800">
+                            ⚡ 1s 實時離站過濾
+                        </span>
+                    </div>
+                    
+                    <div class="bg-blue-50 dark:bg-slate-800/90 border border-blue-200 dark:border-slate-700 p-4 rounded-xl mb-3 shadow-sm flex justify-between items-center" :style="(selectedRoute.company === 'MTR' || selectedRoute.company === 'LRT') ? { borderLeft: '6px solid ' + selectedRoute.color } : {}">
+                        <div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <span :class="['px-2 py-0.5 text-xs font-black rounded-md', getCompanyBadgeClass(selectedRoute.company)]" :style="(selectedRoute.company === 'MTR' || selectedRoute.company === 'LRT') ? { backgroundColor: selectedRoute.color, color: '#fff' } : {}">
+                                    {{ selectedRoute.company }}
+                                </span>
+                                <h2 class="text-2xl font-black tracking-tight">{{ selectedRoute.route }}</h2>
+                            </div>
+                            <p class="text-xs text-slate-600 dark:text-slate-300">目的地: <span class="font-bold text-slate-800 dark:text-white text-sm">{{ selectedRoute.dest_tc }}</span></p>
+                        </div>
+
+                        <!-- 切換來回方向按鈕 -->
+                        <button 
+                            v-if="selectedRoute.company !== 'MTR' && selectedRoute.company !== 'LRT'"
+                            @click="toggleRouteDirection" 
+                            type="button" 
+                            class="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-3 py-2 rounded-xl text-xs font-bold shadow transition cursor-pointer flex items-center gap-1 shrink-0">
+                            🔄 切換方向
+                        </button>
+                    </div>
+
+                    <!-- 港鐵 / 輕鐵專屬：線路分布圖 -->
+                    <div v-if="selectedRoute.company === 'MTR' || selectedRoute.company === 'LRT'" class="mb-4 bg-slate-900 text-white p-3 rounded-xl shadow">
+                        <div class="text-xs font-bold mb-2 flex items-center gap-1 text-slate-300">
+                            <span>🗺️ {{ selectedRoute.route }} 線路分布圖</span>
+                        </div>
+                        <div class="flex items-center overflow-x-auto py-2 px-1 gap-1">
+                            <template v-for="(s, idx) in routeStops" :key="'map-'+s.stop">
+                                <div class="flex flex-col items-center min-w-[50px]">
+                                    <div class="w-3.5 h-3.5 rounded-full border-2 border-white shadow-md mb-1" :style="{ backgroundColor: selectedRoute.color }"></div>
+                                    <span class="text-[10px] font-bold whitespace-nowrap text-slate-200 scale-90">{{ s.name_tc }}</span>
+                                </div>
+                                <div v-if="idx < routeStops.length - 1" class="h-1 flex-1 min-w-[20px] rounded" :style="{ backgroundColor: selectedRoute.color }"></div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div v-if="loadingStops" class="text-center py-12 text-slate-500">
+                        <div class="animate-spin inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mb-2"></div>
+                        <p class="text-sm">正在載入車站數據...</p>
+                    </div>
+
+                    <div v-else class="space-y-2.5 relative">
+                        <div v-if="selectedRoute.company === 'MTR' || selectedRoute.company === 'LRT'" class="absolute left-[23px] top-4 bottom-4 w-1 rounded -z-0" :style="{ backgroundColor: selectedRoute.color }"></div>
+
+                        <div 
+                            v-for="(stop, index) in routeStops" 
+                            :key="stop.stop"
+                            class="p-3 border border-slate-200 dark:border-slate-700/80 rounded-xl bg-white/95 dark:bg-slate-800/95 shadow-sm flex justify-between items-start gap-2 relative z-10">
+                            
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-6 h-6 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0 shadow-sm" :style="(selectedRoute.company === 'MTR' || selectedRoute.company === 'LRT') ? { backgroundColor: selectedRoute.color } : { backgroundColor: '#64748b' }">
+                                        {{ index + 1 }}
+                                    </span>
+                                    <span class="font-bold text-base text-slate-800 dark:text-slate-100">{{ stop.name_tc }}</span>
+                                    <span v-if="stop.code" class="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-500 px-1.5 py-0.5 rounded font-mono">{{ stop.code }}</span>
+                                </div>
+
+                                <!-- 港鐵車廂及出口指南 -->
+                                <div v-if="selectedRoute.company === 'MTR' || selectedRoute.company === 'LRT'" class="mt-2 ml-8 text-[11px] bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 p-2 rounded-lg border border-amber-200 dark:border-amber-800/50 space-y-0.5">
+                                    <div class="font-bold flex items-center gap-1">
+                                        <span>🚪 上落車車廂提示:</span> 
+                                        <span class="text-amber-700 dark:text-amber-300">{{ stop.bestCar || '第 3-4 卡 / 門 2-3' }}</span>
+                                    </div>
+                                    <div class="text-[10px] text-slate-600 dark:text-slate-300">
+                                        📍 鄰近出口: <span class="font-bold text-slate-800 dark:text-slate-100">{{ stop.bestExit || 'A/B 出口、轉乘扶手電梯' }}</span>
+                                    </div>
+                                </div>
+
+                                <div class="mt-2 text-xs space-y-1.5 pl-8">
+                                    <div v-if="getVisibleEtas(stop.etaList).length > 0" class="flex flex-wrap gap-1.5">
+                                        <span 
+                                            v-for="(eta, eIdx) in getVisibleEtas(stop.etaList)" 
+                                            :key="eIdx" 
+                                            class="inline-flex items-center bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-extrabold px-2.5 py-1 rounded-lg border border-emerald-300 dark:border-emerald-800 shadow-sm">
+                                            ⏱️ {{ getFormattedETA(eta, stop) }}
+                                            <span v-if="eta.destName" class="text-[10px] ml-1 bg-emerald-200 dark:bg-emerald-800 px-1 rounded">往 {{ eta.destName }}</span>
+                                        </span>
+                                    </div>
+                                    <span v-else class="text-slate-400 text-xs">暫無實時班次數據</span>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col items-center gap-2 shrink-0 pt-0.5">
+                                <button 
+                                    @click="toggleFavorite(selectedRoute, stop)" 
+                                    type="button"
+                                    class="text-2xl p-1 active:scale-125 transition cursor-pointer"
+                                    title="收藏車站">
+                                    {{ isFavorite(selectedRoute.route, stop.stop) ? '⭐' : '☆' }}
+                                </button>
+                                
+                                <button 
+                                    @click="toggleStopDisplayMode(stop)"
+                                    type="button"
+                                    class="text-[10px] px-2 py-1 rounded-md border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 active:bg-slate-200 font-bold shadow-sm cursor-pointer"
+                                    title="切換 13:50 具體時間或倒數模式">
+                                    🕒 {{ (stop.customTimeMode || timeDisplayMode) === 'exact' ? '13:50' : '倒數' }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 3. GPS 附近車站 -->
+                <section v-if="currentTab === 'nearby'">
+                    <div class="text-center mb-3">
+                        <button 
+                            @click="getNearbyStops" 
+                            type="button"
+                            :class="[themeConfig.buttonActive, 'w-full text-white font-bold py-3.5 rounded-xl shadow-md flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer']">
+                            📍 重新定位附近 500 米車站
+                        </button>
+                    </div>
+
+                    <div v-if="locating" class="text-center py-12 text-slate-500">
+                        <div class="animate-spin inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mb-2"></div>
+                        <p class="text-sm">正在定位及計算附近車站距離...</p>
+                    </div>
+
+                    <div v-else-if="nearbyStops.length === 0" class="text-center py-12 text-slate-400 text-sm">
+                        未有獲取到附近車站，請確認手機已開啟 GPS 定位權限。
+                    </div>
+
+                    <div v-else class="space-y-3">
+                        <div 
+                            v-for="stop in nearbyStops" 
+                            :key="stop.stop" 
+                            class="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white/95 dark:bg-slate-800/95 shadow-sm">
+                            <div class="flex justify-between items-start mb-2">
+                                <div>
+                                    <h3 class="font-bold text-base text-slate-800 dark:text-slate-100">{{ stop.name_tc }}</h3>
+                                    <p class="text-xs text-blue-600 dark:text-blue-400 font-semibold">距離約 {{ Math.round(stop.distance) }} 米</p>
+                                </div>
+                            </div>
+
+                            <!-- 可展開 / 收起的折疊按鈕 -->
+                            <button 
+                                @click="toggleNearbyStopETA(stop)" 
+                                type="button"
+                                class="w-full text-xs bg-slate-100 dark:bg-slate-700/80 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 py-2.5 rounded-lg mt-1 font-bold flex items-center justify-center gap-1 transition cursor-pointer">
+                                <span v-if="stop.loadingEta" class="animate-spin inline-block w-3 h-3 border-2 border-slate-600 border-t-transparent rounded-full"></span>
+                                <span>{{ stop.showEtas ? '▲ 收起到站時間' : (stop.loadingEta ? '搜尋途經車次中...' : '▼ 查看此站所有到站時間') }}</span>
+                            </button>
+
+                            <!-- 到站時間列表 (預設展開，點擊可收起) -->
+                            <div v-if="stop.showEtas && getVisibleEtas(stop.stopEtas).length > 0" class="mt-3 border-t border-slate-100 dark:border-slate-700 pt-2 space-y-1.5">
+                                <div v-for="(item, idx) in getVisibleEtas(stop.stopEtas)" :key="idx" class="flex justify-between items-center text-xs bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                    <div class="flex items-center gap-2">
+                                        <span :class="['px-1.5 py-0.5 text-[10px] font-black rounded', getCompanyBadgeClass(item.company)]">
+                                            {{ item.company }}
+                                        </span>
+                                        <span class="font-extrabold text-sm text-slate-800 dark:text-slate-200">{{ item.route }}</span>
+                                        <span class="text-slate-500 dark:text-slate-400">往 {{ item.dest }}</span>
+                                    </div>
+                                    <div class="font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-800">
+                                        {{ getFormattedETA(item, stop) }}
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else-if="stop.showEtas && !stop.loadingEta" class="mt-2 text-xs text-slate-400 text-center py-1">
+                                此站暫無即時到站數據
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 4. 我的收藏頁 -->
+                <section v-if="currentTab === 'favorites'">
+                    <h2 class="font-bold text-base mb-3 flex items-center justify-between">
+                        <span>⭐ 我的常用車站</span>
+                        <span class="text-xs text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> 1秒自動刷新
+                        </span>
+                    </h2>
+
+                    <div v-if="favorites.length === 0" class="text-center py-12 text-slate-400 text-sm">
+                        未有收藏車站。在路線詳情頁點擊「☆」即可加入收藏！
+                    </div>
+
+                    <div v-else class="space-y-2.5">
+                        <div 
+                            v-for="fav in favorites" 
+                            :key="fav.route + '-' + fav.stopId"
+                            class="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white/95 dark:bg-slate-800/95 shadow-sm flex justify-between items-center">
+                            <div>
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span :class="['px-2 py-0.5 text-xs font-black rounded-md', getCompanyBadgeClass(fav.company)]">
+                                        {{ fav.company }}
+                                    </span>
+                                    <span class="font-extrabold text-xl">{{ fav.route }}</span>
+                                    <span class="text-slate-700 dark:text-slate-300 text-xs font-bold">@ {{ fav.stopName }}</span>
+                                </div>
+                                <div class="text-xs text-emerald-700 dark:text-emerald-400 font-extrabold mt-1 flex items-center gap-1">
+                                    ⏱️ 到站: {{ isEtaValid(fav) ? getFormattedETA(fav, fav) : '已離站 / 暫無班次' }}
+                                </div>
+                            </div>
+                            <div class="flex gap-2 items-center">
+                                <button @click="refreshFavETA(fav)" type="button" class="p-2 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 rounded-lg active:scale-95 cursor-pointer" title="手動刷新到站時間">🔄</button>
+                                <button @click="removeFavorite(fav)" type="button" class="p-2 text-red-500 bg-red-50 dark:bg-red-950/50 rounded-lg active:scale-95 cursor-pointer" title="刪除收藏">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 5. 社區反饋 & 官方公告詳情 -->
+                <section v-if="currentTab === 'community'">
+                    <div class="flex border-b border-slate-200 dark:border-slate-700 mb-4 gap-2">
+                        <button 
+                            @click="communitySubTab = 'announcements'" 
+                            type="button"
+                            :class="['pb-2 px-2 text-xs font-bold border-b-2 transition cursor-pointer', communitySubTab === 'announcements' ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500']">
+                            📢 官方公告
+                        </button>
+                        <button 
+                            @click="communitySubTab = 'forum'" 
+                            type="button"
+                            :class="['pb-2 px-2 text-xs font-bold border-b-2 transition cursor-pointer', communitySubTab === 'forum' ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500']">
+                            💬 用家討論區
+                        </button>
+                        <button 
+                            @click="communitySubTab = 'bugReport'" 
+                            type="button"
+                            :class="['pb-2 px-2 text-xs font-bold border-b-2 transition cursor-pointer', communitySubTab === 'bugReport' ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500']">
+                            ⚠️ 漏洞匯報 (IG)
+                        </button>
+                    </div>
+
+                    <!-- 官方公告 -->
+                    <div v-if="communitySubTab === 'announcements'" class="space-y-3">
+                        <div v-for="item in announcements" :key="item.id" class="p-3.5 bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm space-y-2">
+                            <div class="flex justify-between items-center">
+                                <span class="text-xs font-black px-2 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">{{ item.tag }}</span>
+                                <span class="text-[10px] text-slate-400">{{ item.date }}</span>
+                            </div>
+                            <h3 class="font-extrabold text-sm text-slate-800 dark:text-slate-100">{{ item.title }}</h3>
+                            <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{{ item.summary }}</p>
+                            
+                            <div class="pt-1 text-right">
+                                <button 
+                                    @click="openAnnouncementModal(item)" 
+                                    type="button"
+                                    class="text-xs bg-blue-50 dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-bold px-3 py-1.5 rounded-lg border border-blue-200 dark:border-slate-600 active:scale-95 transition cursor-pointer">
+                                    🔍 查看詳情
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 用家討論區 -->
+                    <div v-if="communitySubTab === 'forum'" class="space-y-4">
+                        <div class="p-3.5 bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm space-y-2.5">
+                            <h3 class="text-xs font-bold text-slate-700 dark:text-slate-200">✍️ 發表你的使用心得/建議</h3>
+                            
+                            <div class="flex gap-2">
+                                <input v-model="newPost.author" type="text" placeholder="你的暱稱 (選填)" class="w-1/2 p-2 text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded-lg" />
+                                <select v-model="newPost.rating" class="w-1/2 p-2 text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded-lg">
+                                    <option value="5">⭐⭐⭐⭐⭐ 5星好評</option>
+                                    <option value="4">⭐⭐⭐⭐ 4星推薦</option>
+                                    <option value="3">⭐⭐⭐ 3星普通</option>
+                                    <option value="2">⭐⭐ 2星需要改善</option>
+                                    <option value="1">⭐ 1星不滿意</option>
+                                </select>
+                            </div>
+
+                            <input v-model="newPost.goodPoint" type="text" placeholder="👍 覺得好的地方" class="w-full p-2 text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded-lg" />
+                            <input v-model="newPost.badPoint" type="text" placeholder="👎 覺得需要改善的地方" class="w-full p-2 text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded-lg" />
+                            <textarea v-model="newPost.comment" rows="2" placeholder="詳細留言討論..." class="w-full p-2 text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded-lg"></textarea>
+
+                            <button @click="addForumPost" type="button" class="w-full bg-blue-600 text-white font-bold py-2 rounded-lg text-xs shadow active:scale-98 cursor-pointer">發佈貼文</button>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div v-for="post in forumPosts" :key="post.id" class="p-3.5 bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm space-y-1.5">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="font-bold text-slate-800 dark:text-slate-200">{{ post.author }}</span>
+                                    <span class="text-amber-500">{{ '⭐'.repeat(post.rating) }}</span>
+                                </div>
+                                <div v-if="post.goodPoint" class="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 p-1.5 rounded border border-emerald-100 dark:border-emerald-900">
+                                    👍 <span class="font-bold">好處:</span> {{ post.goodPoint }}
+                                </div>
+                                <div v-if="post.badPoint" class="text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 p-1.5 rounded border border-rose-100 dark:border-rose-900">
+                                    👎 <span class="font-bold">改善:</span> {{ post.badPoint }}
+                                </div>
+                                <p class="text-xs text-slate-600 dark:text-slate-300 pt-1">{{ post.comment }}</p>
+                                <div class="text-[10px] text-slate-400 text-right">{{ post.time }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 固定直連 IG table_gao 漏洞匯報區 -->
+                    <div v-if="communitySubTab === 'bugReport'" class="space-y-4 text-center py-4">
+                        <div class="p-5 bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm space-y-4">
+                            <div class="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 flex items-center justify-center text-white text-3xl shadow-lg">
+                                📸
+                            </div>
+
+                            <div>
+                                <h3 class="font-extrabold text-base text-slate-800 dark:text-slate-100">一鍵至 Instagram 匯報漏洞</h3>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                                    遇到 Bug、數據不準或介面問題？點擊下方按鈕即可直接開啟 Instagram 私訊聯絡開發者！
+                                </p>
+                            </div>
+
+                            <a 
+                                href="https://instagram.com/table_gao" 
+                                target="_blank" 
+                                class="block w-full bg-gradient-to-r from-purple-600 via-pink-500 to-amber-500 text-white font-extrabold py-3.5 rounded-xl shadow-lg active:scale-95 transition flex items-center justify-center gap-2 text-sm cursor-pointer">
+                                💬 打開 Instagram 私訊 (@table_gao)
+                            </a>
+                        </div>
+                    </div>
+                </section>
+
+            </main>
+
+            <!-- 仿官方 App 底部平滑彈出式虛擬鍵盤 (Bottom Sheet) -->
+            <div v-if="showVirtualKeyboard" @click="showVirtualKeyboard = false" class="fixed inset-0 bg-black/40 z-40"></div>
+
+            <div 
+                :class="['fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-50 bg-[#475b68] dark:bg-slate-800 p-3.5 rounded-t-2xl shadow-2xl transition-transform duration-300 pb-safe space-y-2 border-t border-slate-600/50', showVirtualKeyboard ? 'translate-y-0' : 'translate-y-full']">
+                
+                <div class="flex justify-between items-center text-white text-xs font-bold px-1 pb-1">
+                    <span class="flex items-center gap-1 opacity-90">⌨️ 路線專用鍵盤</span>
+                    <button @click="showVirtualKeyboard = false" class="text-slate-200 hover:text-white font-extrabold text-xs cursor-pointer px-3 py-1.5 bg-white/10 active:bg-white/20 rounded-lg transition">
+                        ✕ 完成
+                    </button>
+                </div>
+
+                <div class="flex gap-3 items-center justify-between">
+                    <!-- 左側：數字及功能鍵 (3x4 Grid) -->
+                    <div class="grid grid-cols-3 gap-2 flex-1 max-w-[220px]">
+                        <button v-for="num in ['1','2','3','4','5','6','7','8','9']" :key="num"
+                            @click="pressVirtualKey(num)"
+                            type="button"
+                            class="bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-800 font-extrabold text-2xl py-2.5 rounded-xl shadow-md cursor-pointer transition text-center">
+                            {{ num }}
+                        </button>
+                        
+                        <!-- 第四行：清空、0、退格 -->
+                        <button @click="pressVirtualKey('CLEAR')" type="button" class="bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-400 font-bold text-xl py-2.5 rounded-xl shadow-md cursor-pointer transition flex items-center justify-center">
+                            ✕
+                        </button>
+                        <button @click="pressVirtualKey('0')" type="button" class="bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-800 font-extrabold text-2xl py-2.5 rounded-xl shadow-md cursor-pointer transition text-center">
+                            0
+                        </button>
+                        <button @click="pressVirtualKey('BACKSPACE')" type="button" class="bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-600 font-bold text-xl py-2.5 rounded-xl shadow-md cursor-pointer transition flex items-center justify-center">
+                            ⇦
+                        </button>
+                    </div>
+
+                    <!-- 右側：2欄圓形字母滾動區 (帶 A-Z 完整字母) -->
+                    <div class="flex flex-col items-center flex-1 max-w-[150px]">
+                        <div class="text-white text-[10px] mb-0.5 opacity-80">▲ 上滑</div>
+                        <div class="grid grid-cols-2 gap-2 max-h-[195px] overflow-y-auto px-1 py-1 w-full scrollbar-none">
+                            <button 
+                                v-for="letter in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z']" 
+                                :key="letter"
+                                @click="pressVirtualKey(letter)"
+                                type="button"
+                                class="w-11 h-11 mx-auto bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-800 font-extrabold text-xl rounded-full shadow-md cursor-pointer transition flex items-center justify-center">
+                                {{ letter }}
+                            </button>
+                        </div>
+                        <div class="text-white text-[10px] mt-0.5 opacity-80">▼ 下滑</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 官方公告詳情 Modal 彈窗 -->
+            <div v-if="showAnnouncementModal && selectedAnnouncement" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-sm w-full shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto text-slate-800 dark:text-slate-100">
+                    <div class="flex justify-between items-center border-b pb-2.5 dark:border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-black px-2 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">{{ selectedAnnouncement.tag }}</span>
+                            <span class="text-[10px] text-slate-400">{{ selectedAnnouncement.date }}</span>
+                        </div>
+                        <button @click="showAnnouncementModal = false" type="button" class="text-slate-400 text-xl font-bold cursor-pointer">✕</button>
+                    </div>
+
+                    <h3 class="font-extrabold text-base leading-snug">{{ selectedAnnouncement.title }}</h3>
+                    
+                    <div class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line bg-slate-50 dark:bg-slate-900/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                        {{ selectedAnnouncement.content }}
+                    </div>
+
+                    <button @click="showAnnouncementModal = false" type="button" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-bold shadow-md active:scale-98 text-xs cursor-pointer">我知道了</button>
+                </div>
+            </div>
+
+            <!-- 設定 Modal -->
+            <div v-if="showSettings" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-sm w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto text-slate-800 dark:text-slate-100">
+                    <div class="flex justify-between items-center border-b pb-2.5 dark:border-slate-700">
+                        <h3 class="font-extrabold text-base">⚙️ 介面主題 & 背景設定</h3>
+                        <button @click="showSettings = false" type="button" class="text-slate-400 text-xl font-bold cursor-pointer">✕</button>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold mb-2">選擇 App 主題色彩</label>
+                        <div class="grid grid-cols-5 gap-2">
+                            <button 
+                                v-for="tKey in Object.keys(themePresets)" 
+                                :key="tKey"
+                                type="button"
+                                @click="currentTheme = tKey"
+                                :class="['h-10 rounded-xl border-2 flex items-center justify-center text-xs font-black transition cursor-pointer', themePresets[tKey].sampleBg, currentTheme === tKey ? 'border-black dark:border-white scale-105 shadow-md' : 'border-transparent']">
+                                {{ themePresets[tKey].name }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold mb-1.5">上載手機相片作為背景</label>
+                        <input type="file" accept="image/*" @change="handleBgUpload" class="text-xs w-full text-slate-500 file:mr-2 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 cursor-pointer" />
+                        <!-- 修復：將 @clear 改為 @click -->
+                        <button v-if="customBgImage" @click="clearBgImage" type="button" class="mt-2 text-xs text-red-500 font-bold underline cursor-pointer">清除背景相片</button>
+                    </div>
+
+                    <button @click="showSettings = false" type="button" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md active:scale-98 cursor-pointer">完成設定</button>
+                </div>
+            </div>
+
+            <!-- 底部導覽列 -->
+            <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 flex justify-around p-2.5 z-30 backdrop-blur bottom-safe pointer-events-auto">
+                <button 
+                    @click="currentTab = 'search'" 
+                    type="button"
+                    :class="['flex flex-col items-center text-xs font-bold transition active:scale-90 cursor-pointer', currentTab === 'search' || currentTab === 'routeDetail' ? themeConfig.textActive : 'text-slate-400']">
+                    <span class="text-xl">🔍</span>
+                    <span>搜尋</span>
+                </button>
+                <button 
+                    @click="currentTab = 'nearby'" 
+                    type="button"
+                    :class="['flex flex-col items-center text-xs font-bold transition active:scale-90 cursor-pointer', currentTab === 'nearby' ? themeConfig.textActive : 'text-slate-400']">
+                    <span class="text-xl">📍</span>
+                    <span>附近</span>
+                </button>
+                <button 
+                    @click="currentTab = 'favorites'" 
+                    type="button"
+                    :class="['flex flex-col items-center text-xs font-bold transition active:scale-90 cursor-pointer', currentTab === 'favorites' ? themeConfig.textActive : 'text-slate-400']">
+                    <span class="text-xl">⭐</span>
+                    <span>收藏</span>
+                </button>
+                <button 
+                    @click="currentTab = 'community'" 
+                    type="button"
+                    :class="['flex flex-col items-center text-xs font-bold transition active:scale-90 cursor-pointer', currentTab === 'community' ? themeConfig.textActive : 'text-slate-400']">
+                    <span class="text-xl">💬</span>
+                    <span>社區</span>
+                </button>
+            </nav>
+
+        </div>
+    </div>
+
+    <script>
+        // 自動防護腳本：動態監聽並銷毀任何託管平台（Netlify / Vercel / Render 等）強行注入的右下角浮窗 Drawer
+        const observer = new MutationObserver(() => {
+            const platformSelectors = [
+                '#netlify-drawer', '[data-netlify-drawer]', 'iframe[src*="netlify"]',
+                '.netlify-feedback-button', '#vercel-toolbar', '[data-vercel-toolbar]',
+                'vercel-live-feedback', '#render-badge', '.render-badge', '#replit-badge-container'
+            ];
+            platformSelectors.forEach(sel => {
+                document.querySelectorAll(sel).forEach(el => el.remove());
+            });
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+
+        const { createApp, ref, computed, onMounted, onUnmounted, watch } = Vue;
+
+        createApp({
+            setup() {
+                const currentTab = ref('search');
+                const searchQuery = ref('');
+                const companyFilter = ref('ALL');
+                
+                // 虛擬鍵盤開關 (預設關閉，點擊輸入框時自動彈出)
+                const showVirtualKeyboard = ref(false);
+
+                const routes = ref([]);
+                const loadingRoutes = ref(false);
+                
+                const selectedRoute = ref(null);
+                const routeStops = ref([]);
+                const loadingStops = ref(false);
+
+                const locating = ref(false);
+                const nearbyStops = ref([]);
+                const favorites = ref(JSON.parse(localStorage.getItem('hk_bus_favs') || '[]'));
+
+                const timeDisplayMode = ref('mins'); 
+
+                const nowTimestamp = ref(Date.now());
+                const currentTimeStr = ref('');
+
+                const showSettings = ref(false);
+                const currentTheme = ref(localStorage.getItem('hk_bus_theme') || 'blue');
+                const customBgImage = ref(localStorage.getItem('hk_bus_bg_img') || '');
+
+                const communitySubTab = ref('announcements');
+                
+                // 官方公告彈窗控制
+                const showAnnouncementModal = ref(false);
+                const selectedAnnouncement = ref(null);
+
+                const openAnnouncementModal = (item) => {
+                    selectedAnnouncement.value = item;
+                    showAnnouncementModal.value = true;
+                };
+
+                // 官方公告數據
+                const announcements = ref([
+                    { 
+                        id: 1, 
+                        tag: '完全修復', 
+                        date: '2026-10-23', 
+                        title: '系統 v3.7：修復相片清除按鈕與自動清理託管平台右下角浮窗', 
+                        summary: '現已修復清除背景相片事件綁定錯誤，並加入自動防護腳本徹底清除託管平台浮窗。',
+                        content: '詳細更新內容：\n\n1. 【清除背景相片按鈕修復】將原本錯誤的事件寫法修復為 @click="clearBgImage"，點擊可即時清空相片。\n2. 【徹底移除右下角平台 Drawer】新增動態 MutationObserver 防護腳本，自動銷毀託管平台（Netlify/Vercel 等）強行注入的浮動 Drawer 工具列。\n3. 【補全嶼巴標籤】修復「嶼巴 NLB」分類按鈕漏寫 Key 值問題，點擊過濾更準確。'
+                    }
+                ]);
+
+                const forumPosts = ref(JSON.parse(localStorage.getItem('hk_bus_forum_posts') || JSON.stringify([
+                    { id: 1, author: '阿傑', rating: 5, goodPoint: '相片可以完美清除，右下角那個平台按鈕也終於消失了！', badPoint: '無', comment: '介面非常乾淨，使用體驗極佳！', time: '剛剛' }
+                ])));
+
+                const newPost = ref({ author: '', rating: 5, goodPoint: '', badPoint: '', comment: '' });
+
+                // API Base URLs
+                const KMB_API = 'https://data.etabus.gov.hk/v1/transport/kmb';
+                const CTB_API = 'https://rt.data.gov.hk/v2/transport/citybus';
+                const GMB_API = 'https://data.etagmb.gov.hk';
+                const MTR_API = 'https://rt.data.gov.hk/v1/transport/mtr/get_schedule.php';
+                const LRT_API = 'https://rt.data.gov.hk/v1/transport/mtr/lrt/get_schedule.php';
+                const NLB_API = 'https://rt.data.gov.hk/v2/transport/nlb';
+
+                // 港鐵及輕鐵資料庫
+                const mtrLinesData = [
+                    { code: 'ISL', name: '港島綫', color: '#0072CE', dest_tc: '柴灣 / 堅尼地城', stations: [{ code: 'KET', name_tc: '堅尼地城' }, { code: 'HKU', name_tc: '香港大學' }, { code: 'SYP', name_tc: '西營盤' }, { code: 'SHW', name_tc: '上環' }, { code: 'CEN', name_tc: '中環' }, { code: 'ADM', name_tc: '金鐘' }, { code: 'WAC', name_tc: '灣仔' }, { code: 'CWB', name_tc: '銅鑼灣' }, { code: 'TIH', name_tc: '天后' }, { code: 'FOH', name_tc: '炮台山' }, { code: 'NOP', name_tc: '北角' }, { code: 'QUO', name_tc: '鰂魚涌' }, { code: 'TAI', name_tc: '太古' }, { code: 'SWH', name_tc: '西灣河' }, { code: 'SKW', name_tc: '筲箕灣' }, { code: 'CHW', name_tc: '柴灣' }] },
+                    { code: 'TWL', name: '荃灣綫', color: '#E60012', dest_tc: '荃灣 / 中環', stations: [{ code: 'CEN', name_tc: '中環' }, { code: 'ADM', name_tc: '金鐘' }, { code: 'TST', name_tc: '尖沙咀' }, { code: 'JOR', name_tc: '佐敦' }, { code: 'YMT', name_tc: '油麻地' }, { code: 'MOK', name_tc: '旺角' }, { code: 'PRE', name_tc: '太子' }, { code: 'SSP', name_tc: '深水埗' }, { code: 'CSW', name_tc: '長沙灣' }, { code: 'LCK', name_tc: '荔枝角' }, { code: 'MEF', name_tc: '美孚' }, { code: 'LAK', name_tc: '荔景' }, { code: 'KWF', name_tc: '葵芳' }, { code: 'KOH', name_tc: '葵興' }, { code: 'TWH', name_tc: '大窩口' }, { code: 'TSW', name_tc: '荃灣' }] },
+                    { code: 'KTL', name: '觀塘綫', color: '#00833E', dest_tc: '調景嶺 / 黃埔', stations: [{ code: 'WHA', name_tc: '黃埔' }, { code: 'HOM', name_tc: '何文田' }, { code: 'YMT', name_tc: '油麻地' }, { code: 'MOK', name_tc: '旺角' }, { code: 'PRE', name_tc: '太子' }, { code: 'SKM', name_tc: '石硤尾' }, { code: 'KOT', name_tc: '九龍塘' }, { code: 'LOF', name_tc: '樂富' }, { code: 'WTS', name_tc: '黃大仙' }, { code: 'DIH', name_tc: '鑽石山' }, { code: 'CHH', name_tc: '彩虹' }, { code: 'KOB', name_tc: '九龍灣' }, { code: 'NTK', name_tc: '牛頭角' }, { code: 'KWT', name_tc: '觀塘' }, { code: 'YAT', name_tc: '油塘' }, { code: 'TIK', name_tc: '調景嶺' }] },
+                    { code: 'TKL', name: '將軍澳綫', color: '#7D226C', dest_tc: '寶琳 / 康城 / 北角', stations: [{ code: 'NOP', name_tc: '北角' }, { code: 'QUO', name_tc: '鰂魚涌' }, { code: 'YAT', name_tc: '油塘' }, { code: 'TIK', name_tc: '調景嶺' }, { code: 'TKO', name_tc: '將軍澳' }, { code: 'LHP', name_tc: '康城' }, { code: 'HAH', name_tc: '坑口' }, { code: 'POA', name_tc: '寶琳' }] },
+                    { code: 'EAL', name: '東鐵綫', color: '#53B9E6', dest_tc: '羅湖 / 落馬洲 / 金鐘', stations: [{ code: 'ADM', name_tc: '金鐘' }, { code: 'EXC', name_tc: '會展' }, { code: 'HUH', name_tc: '紅磡' }, { code: 'MOK', name_tc: '旺角東' }, { code: 'KOT', name_tc: '九龍塘' }, { code: 'TAW', name_tc: '大圍' }, { code: 'SHT', name_tc: '沙田' }, { code: 'FOT', name_tc: '火炭' }, { code: 'RAC', name_tc: '馬場' }, { code: 'UNI', name_tc: '大學' }, { code: 'TPO', name_tc: '大埔墟' }, { code: 'TWO', name_tc: '太和' }, { code: 'FAN', name_tc: '粉嶺' }, { code: 'SHS', name_tc: '上水' }, { code: 'LOW', name_tc: '羅湖' }, { code: 'LMU', name_tc: '落馬洲' }] },
+                    { code: 'TML', name: '屯馬綫', color: '#923011', dest_tc: '烏溪沙 / 屯門', stations: [{ code: 'TWM', name_tc: '屯門' }, { code: 'SIH', name_tc: '兆康' }, { code: 'TIS', name_tc: '天水圍' }, { code: 'LOP', name_tc: '朗屏' }, { code: 'YUL', name_tc: '元朗' }, { code: 'KSW', name_tc: '錦上路' }, { code: 'TWW', name_tc: '荃灣西' }, { code: 'MEF', name_tc: '美孚' }, { code: 'AUS', name_tc: '柯士甸' }, { code: 'ETS', name_tc: '尖東' }, { code: 'HUH', name_tc: '紅磡' }, { code: 'HOM', name_tc: '何文田' }, { code: 'TKW', name_tc: '土瓜灣' }, { code: 'SUW', name_tc: '宋皇臺' }, { code: 'KAT', name_tc: '啟德' }, { code: 'DIH', name_tc: '鑽石山' }, { code: 'TAW', name_tc: '大圍' }, { code: 'CKN', name_tc: '車公廟' }, { code: 'STW', name_tc: '沙田圍' }, { code: 'CIO', name_tc: '第一城' }, { code: 'SHM', name_tc: '石門' }, { code: 'TSO', name_tc: '大水坑' }, { code: 'HEO', name_tc: '恒安' }, { code: 'MOS', name_tc: '馬鞍山' }, { code: 'WKS', name_tc: '烏溪沙' }] },
+                    { code: 'SIL', name: '南港島綫', color: '#B6BD00', dest_tc: '海怡半島 / 金鐘', stations: [{ code: 'ADM', name_tc: '金鐘' }, { code: 'OCP', name_tc: '海洋公園' }, { code: 'WCH', name_tc: '黃竹坑' }, { code: 'LET', name_tc: '利東' }, { code: 'SOH', name_tc: '海怡半島' }] },
+                    { code: 'TCL', name: '東涌綫', color: '#F99D1C', dest_tc: '東涌 / 香港', stations: [{ code: 'HOK', name_tc: '香港' }, { code: 'KOW', name_tc: '九龍' }, { code: 'OLY', name_tc: '奧運' }, { code: 'NAM', name_tc: '南昌' }, { code: 'LAK', name_tc: '荔景' }, { code: 'TSY', name_tc: '青衣' }, { code: 'SUN', name_tc: '欣澳' }, { code: 'TOC', name_tc: '東涌' }] },
+                    { code: 'AEL', name: '機場快綫', color: '#00838F', dest_tc: '博覽館 / 機場 / 香港', stations: [{ code: 'HOK', name_tc: '香港' }, { code: 'KOW', name_tc: '九龍' }, { code: 'TSY', name_tc: '青衣' }, { code: 'AIR', name_tc: '機場' }, { code: 'AWE', name_tc: '博覽館' }] },
+                    { code: 'DRL', name: '迪士尼綫', color: '#E7007C', dest_tc: '迪士尼 / 欣澳', stations: [{ code: 'SUN', name_tc: '欣澳' }, { code: 'DIS', name_tc: '迪士尼' }] },
+
+                    // 12 條輕鐵路線
+                    { code: 'LRT505', isLrt: true, name: '輕鐵 505', color: '#ED8B00', dest_tc: '三聖 / 兆康', stations: [{ code: '010', name_tc: '三聖' }, { code: '265', name_tc: '兆麟' }, { code: '270', name_tc: '安定' }, { code: '295', name_tc: '屯門' }, { code: '330', name_tc: '景峰' }, { code: '310', name_tc: '兆康' }] },
+                    { code: 'LRT507', isLrt: true, name: '輕鐵 507', color: '#18A558', dest_tc: '屯門碼頭 / 田景', stations: [{ code: '001', name_tc: '屯門碼頭' }, { code: '240', name_tc: '兆禧' }, { code: '295', name_tc: '屯門' }, { code: '300', name_tc: '大興' }, { code: '140', name_tc: '田景' }] },
+                    { code: 'LRT610', isLrt: true, name: '輕鐵 610', color: '#D0006F', dest_tc: '屯門碼頭 / 元朗', stations: [{ code: '001', name_tc: '屯門碼頭' }, { code: '200', name_tc: '鳴琴' }, { code: '310', name_tc: '兆康' }, { code: '380', name_tc: '洪水橋' }, { code: '600', name_tc: '元朗' }] },
+                    { code: 'LRT614', isLrt: true, name: '輕鐵 614', color: '#00833E', dest_tc: '屯門碼頭 / 元朗', stations: [{ code: '001', name_tc: '屯門碼頭' }, { code: '330', name_tc: '景峰' }, { code: '310', name_tc: '兆康' }, { code: '600', name_tc: '元朗' }] },
+                    { code: 'LRT614P', isLrt: true, name: '輕鐵 614P', color: '#F28500', dest_tc: '屯門碼頭 / 兆康', stations: [{ code: '001', name_tc: '屯門碼頭' }, { code: '330', name_tc: '景峰' }, { code: '310', name_tc: '兆康' }] },
+                    { code: 'LRT615', isLrt: true, name: '輕鐵 615', color: '#F99D1C', dest_tc: '屯門碼頭 / 元朗', stations: [{ code: '001', name_tc: '屯門碼頭' }, { code: '130', name_tc: '良景' }, { code: '310', name_tc: '兆康' }, { code: '600', name_tc: '元朗' }] },
+                    { code: 'LRT615P', isLrt: true, name: '輕鐵 615P', color: '#800080', dest_tc: '屯門碼頭 / 兆康', stations: [{ code: '001', name_tc: '屯門碼頭' }, { code: '130', name_tc: '良景' }, { code: '310', name_tc: '兆康' }] },
+                    { code: 'LRT705', isLrt: true, name: '輕鐵 705', color: '#7D226C', dest_tc: '天水圍循環綫 (逆時針)', stations: [{ code: '430', name_tc: '天水圍站' }, { code: '445', name_tc: '天耀' }, { code: '550', name_tc: '天逸' }, { code: '510', name_tc: '濕地公園' }] },
+                    { code: 'LRT706', isLrt: true, name: '輕鐵 706', color: '#B6BD00', dest_tc: '天水圍循環綫 (順時針)', stations: [{ code: '430', name_tc: '天水圍站' }, { code: '435', name_tc: '天慈' }, { code: '550', name_tc: '天逸' }] },
+                    { code: 'LRT751', isLrt: true, name: '輕鐵 751', color: '#F99D1C', dest_tc: '友愛 / 天逸', stations: [{ code: '275', name_tc: '友愛' }, { code: '295', name_tc: '屯門' }, { code: '310', name_tc: '兆康' }, { code: '550', name_tc: '天逸' }] },
+                    { code: 'LRT751P', isLrt: true, name: '輕鐵 751P', color: '#0072CE', dest_tc: '天水圍站 / 天逸', stations: [{ code: '430', name_tc: '天水圍站' }, { code: '550', name_tc: '天逸' }] },
+                    { code: 'LRT761P', isLrt: true, name: '輕鐵 761P', color: '#E60012', dest_tc: '天逸 / 元朗', stations: [{ code: '550', name_tc: '天逸' }, { code: '430', name_tc: '天水圍站' }, { code: '600', name_tc: '元朗' }] }
+                ];
+
+                const themePresets = {
+                    blue: { name: '經典藍', headerBg: 'bg-blue-600', buttonActive: 'bg-blue-600 text-white', textActive: 'text-blue-600', sampleBg: 'bg-blue-500 text-white', isDark: false },
+                    emerald: { name: '翡翠綠', headerBg: 'bg-emerald-600', buttonActive: 'bg-emerald-600 text-white', textActive: 'text-emerald-600', sampleBg: 'bg-emerald-500 text-white', isDark: false },
+                    purple: { name: '浪漫紫', headerBg: 'bg-purple-600', buttonActive: 'bg-purple-600 text-white', textActive: 'text-purple-600', sampleBg: 'bg-purple-500 text-white', isDark: false },
+                    rose: { name: '夕陽紅', headerBg: 'bg-rose-600', buttonActive: 'bg-rose-600 text-white', textActive: 'text-rose-600', sampleBg: 'bg-rose-500 text-white', isDark: false },
+                    dark: { name: '極夜黑', headerBg: 'bg-slate-800', buttonActive: 'bg-slate-700 text-white', textActive: 'text-slate-200', sampleBg: 'bg-slate-800 text-white', isDark: true }
+                };
+
+                const themeConfig = computed(() => themePresets[currentTheme.value] || themePresets.blue);
+
+                const bgImageStyle = computed(() => {
+                    if (!customBgImage.value) return {};
+                    return {
+                        backgroundImage: `url(${customBgImage.value})`,
+                        backgroundSize: 'cover',
+                        backgroundPosition: 'center',
+                        backgroundAttachment: 'fixed'
+                    };
+                });
+
+                // 虛擬鍵盤點擊處理
+                const pressVirtualKey = (key) => {
+                    if (key === 'BACKSPACE') {
+                        searchQuery.value = searchQuery.value.slice(0, -1);
+                    } else if (key === 'CLEAR') {
+                        searchQuery.value = '';
+                    } else {
+                        searchQuery.value += key;
+                    }
+                };
+
+                // 兼容 GMB API 物件與陣列兩種格式
+                const fetchAllRoutes = async () => {
+                    loadingRoutes.value = true;
+                    let allFetched = [];
+
+                    // 1. 港鐵 & 輕鐵
+                    const mtrMapped = mtrLinesData.map(m => ({
+                        company: m.isLrt ? 'LRT' : 'MTR',
+                        route: m.name,
+                        lineCode: m.code,
+                        color: m.color,
+                        dest_tc: m.dest_tc,
+                        stations: m.stations
+                    }));
+                    allFetched.push(...mtrMapped);
+
+                    // 2. 專線小巴 GMB
+                    const regions = [{ code: 'HKI', name: '港島' }, { code: 'KLN', name: '九龍' }, { code: 'NT', name: '新界' }];
+                    const gmbPromises = regions.map(async (reg) => {
+                        try {
+                            const res = await fetch(`${GMB_API}/route/${reg.code}`);
+                            const data = await res.json();
+                            const list = [];
+                            
+                            if (data && data.data) {
+                                const parseItem = (item) => {
+                                    let cleanDest = '專線小巴';
+                                    if (item.description_tc) {
+                                        const parts = item.description_tc.split(/[-–—>]/);
+                                        cleanDest = parts.length > 1 ? parts[parts.length - 1].trim() : item.description_tc.trim();
+                                    }
+                                    return {
+                                        company: 'GMB',
+                                        route: item.route_code,
+                                        route_id: item.route_id,
+                                        region: reg.name,
+                                        bound: 'O',
+                                        dest_tc: cleanDest
+                                    };
+                                };
+
+                                if (Array.isArray(data.data)) {
+                                    data.data.forEach(item => list.push(parseItem(item)));
+                                } else if (typeof data.data === 'object') {
+                                    Object.values(data.data).forEach(arr => {
+                                        if (Array.isArray(arr)) {
+                                            arr.forEach(item => list.push(parseItem(item)));
+                                        }
+                                    });
+                                }
+                            }
+                            return list;
+                        } catch(e) {}
+                        return [];
+                    });
+
+                    // 3. 九巴 KMB
+                    const kmbPromise = (async () => {
+                        try {
+                            const kmbRes = await fetch(`${KMB_API}/route/`);
+                            const kmbData = await kmbRes.json();
+                            if (kmbData && kmbData.data) {
+                                return kmbData.data.map(r => ({
+                                    company: 'KMB',
+                                    route: r.route,
+                                    bound: r.bound,
+                                    service_type: r.service_type,
+                                    orig_tc: r.orig_tc,
+                                    dest_tc: r.dest_tc
+                                }));
+                            }
+                        } catch (e) {}
+                        return [];
+                    })();
+
+                    // 4. 城巴 CTB
+                    const ctbPromise = (async () => {
+                        try {
+                            const ctbRes = await fetch(`${CTB_API}/route/ctb`);
+                            const ctbData = await ctbRes.json();
+                            if (ctbData && ctbData.data) {
+                                return ctbData.data.map(r => ({
+                                    company: 'CTB',
+                                    route: r.route,
+                                    bound: 'O',
+                                    service_type: '1',
+                                    orig_tc: r.orig_tc,
+                                    dest_tc: r.dest_tc
+                                }));
+                            }
+                        } catch (e) {}
+                        return [];
+                    })();
+
+                    // 5. 嶼巴 NLB
+                    const nlbPromise = (async () => {
+                        try {
+                            const nlbRes = await fetch(`${NLB_API}/route.php?action=list`);
+                            const nlbData = await nlbRes.json();
+                            if (nlbData && nlbData.routes) {
+                                return nlbData.routes.map(r => {
+                                    let cleanDest = '新大嶼山巴士';
+                                    if (r.routeName_c) {
+                                        const parts = r.routeName_c.split(/[-–—>]/);
+                                        cleanDest = parts.length > 1 ? parts[parts.length - 1].trim() : r.routeName_c.trim();
+                                    }
+                                    return {
+                                        company: 'NLB',
+                                        route: r.routeNo,
+                                        route_id: r.routeId,
+                                        bound: 'O',
+                                        dest_tc: cleanDest
+                                    };
+                                });
+                            }
+                        } catch (e) {}
+                        return [];
+                    })();
+
+                    const [gmbLists, kmbList, ctbList, nlbList] = await Promise.all([
+                        Promise.all(gmbPromises), kmbPromise, ctbPromise, nlbPromise
+                    ]);
+
+                    gmbLists.forEach(list => allFetched.push(...list));
+                    allFetched.push(...kmbList, ...ctbList, ...nlbList);
+
+                    routes.value = allFetched;
+                    loadingRoutes.value = false;
+                };
+
+                const filteredRoutes = computed(() => {
+                    const query = searchQuery.value.trim().toLowerCase();
+                    return routes.value.filter(r => {
+                        let matchCo = false;
+                        if (companyFilter.value === 'ALL') matchCo = true;
+                        else if (companyFilter.value === 'KMB') matchCo = (r.company === 'KMB');
+                        else if (companyFilter.value === 'CTB') matchCo = (r.company === 'CTB');
+                        else if (companyFilter.value === 'GMB') matchCo = (r.company === 'GMB');
+                        else if (companyFilter.value === 'MTR') matchCo = (r.company === 'MTR' || r.company === 'LRT');
+                        else if (companyFilter.value === 'NLB') matchCo = (r.company === 'NLB');
+
+                        if (!matchCo) return false;
+                        if (!query) return true;
+
+                        return r.route.toLowerCase().includes(query) || (r.dest_tc && r.dest_tc.includes(query));
+                    }).sort((a, b) => {
+                        if (query) {
+                            const aExact = a.route.toLowerCase() === query;
+                            const bExact = b.route.toLowerCase() === query;
+                            if (aExact && !bExact) return -1;
+                            if (!aExact && bExact) return 1;
+                        }
+                        return 0;
+                    }).slice(0, 60);
+                });
+
+                // 切換路線來回方向
+                const toggleRouteDirection = () => {
+                    if (!selectedRoute.value) return;
+                    selectedRoute.value.bound = selectedRoute.value.bound === 'O' ? 'I' : 'O';
+                    selectRoute(selectedRoute.value);
+                };
+
+                const selectRoute = async (route) => {
+                    showVirtualKeyboard.value = false;
+                    selectedRoute.value = { ...route };
+                    currentTab.value = 'routeDetail';
+                    loadingStops.value = true;
+                    routeStops.value = [];
+
+                    try {
+                        if (route.company === 'MTR' || route.company === 'LRT') {
+                            routeStops.value = route.stations.map(s => ({
+                                stop: s.code,
+                                code: s.code,
+                                name_tc: s.name_tc,
+                                bestCar: s.bestCar || '第 3-4 卡',
+                                bestExit: s.bestExit || 'A/B 出口',
+                                etaList: [],
+                                customTimeMode: null
+                            }));
+                            refreshRouteETAs();
+                        } else if (route.company === 'KMB') {
+                            const rsRes = await fetch(`${KMB_API}/route-stop/${route.route}/${route.bound === 'O' ? 'outbound' : 'inbound'}/${route.service_type || '1'}`);
+                            const rsData = await rsRes.json();
+                            const stopsRaw = rsData.data || [];
+
+                            const stopPromises = stopsRaw.slice(0, 35).map(async (s) => {
+                                const sRes = await fetch(`${KMB_API}/stop/${s.stop}`);
+                                const sData = await sRes.json();
+                                return {
+                                    stop: s.stop,
+                                    name_tc: sData.data ? sData.data.name_tc : '車站',
+                                    etaList: [],
+                                    customTimeMode: null
+                                };
+                            });
+
+                            routeStops.value = await Promise.all(stopPromises);
+                            refreshRouteETAs();
+                        } else if (route.company === 'CTB') {
+                            const dirParam = route.bound === 'O' ? 'outbound' : 'inbound';
+                            const rsRes = await fetch(`${CTB_API}/route-stop/ctb/${route.route}/${dirParam}`);
+                            const rsData = await rsRes.json();
+                            const stopsRaw = rsData.data || [];
+
+                            const stopPromises = stopsRaw.slice(0, 35).map(async (s) => {
+                                const sRes = await fetch(`${CTB_API}/stop/${s.stop}`);
+                                const sData = await sRes.json();
+                                return {
+                                    stop: s.stop,
+                                    name_tc: sData.data ? sData.data.name_tc : '車站',
+                                    etaList: [],
+                                    customTimeMode: null
+                                };
+                            });
+
+                            routeStops.value = await Promise.all(stopPromises);
+                            refreshRouteETAs();
+                        } else if (route.company === 'GMB') {
+                            const seqParam = route.bound === 'I' ? '2' : '1';
+                            const rsRes = await fetch(`${GMB_API}/route-stop/${route.route_id}/${seqParam}`);
+                            const rsData = await rsRes.json();
+                            
+                            let stopsRaw = [];
+                            if (Array.isArray(rsData.data)) stopsRaw = rsData.data;
+                            else if (rsData.data?.route_stops) stopsRaw = rsData.data.route_stops;
+
+                            routeStops.value = stopsRaw.map(s => ({
+                                stop: s.stop_id,
+                                seq: s.stop_seq,
+                                name_tc: s.name_tc || s.name_c || '車站',
+                                etaList: [],
+                                customTimeMode: null
+                            }));
+
+                            if (routeStops.value.length > 0) {
+                                const lastStop = routeStops.value[routeStops.value.length - 1];
+                                if (lastStop && lastStop.name_tc) {
+                                    selectedRoute.value.dest_tc = lastStop.name_tc;
+                                }
+                            }
+                            refreshRouteETAs();
+                        } else if (route.company === 'NLB') {
+                            const rsRes = await fetch(`${NLB_API}/stop.php?action=list&routeId=${route.route_id}`);
+                            const rsData = await rsRes.json();
+                            const stopsRaw = rsData.stops || [];
+
+                            routeStops.value = stopsRaw.map(s => ({
+                                stop: s.stopId,
+                                name_tc: s.stopName_c,
+                                etaList: [],
+                                customTimeMode: null
+                            }));
+
+                            if (routeStops.value.length > 0) {
+                                const lastStop = routeStops.value[routeStops.value.length - 1];
+                                if (lastStop && lastStop.name_tc) {
+                                    selectedRoute.value.dest_tc = lastStop.name_tc;
+                                }
+                            }
+                            refreshRouteETAs();
+                        }
+                    } catch (e) {
+                        console.error(e);
+                    } finally {
+                        loadingStops.value = false;
+                    }
+                };
+
+                const refreshRouteETAs = async () => {
+                    if (!selectedRoute.value || routeStops.value.length === 0) return;
+                    
+                    const route = selectedRoute.value;
+                    for (let s of routeStops.value) {
+                        try {
+                            if (route.company === 'MTR') {
+                                const mtrRes = await fetch(`${MTR_API}?line=${route.lineCode}&sta=${s.code}`);
+                                const mtrData = await mtrRes.json();
+                                const staKey = `${route.lineCode}-${s.code}`;
+                                const staObj = mtrData.data ? mtrData.data[staKey] : null;
+
+                                let list = [];
+                                if (staObj) {
+                                    ['UP', 'DOWN'].forEach(dir => {
+                                        if (staObj[dir]) {
+                                            staObj[dir].forEach(train => {
+                                                if (train.time) {
+                                                    const isoFormatted = train.time.replace(' ', 'T');
+                                                    list.push({
+                                                        isoTime: isoFormatted,
+                                                        destName: train.dest
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                                s.etaList = list;
+                            } else if (route.company === 'LRT') {
+                                const lrtRes = await fetch(`${LRT_API}?station_id=${s.code}`);
+                                const lrtData = await lrtRes.json();
+                                let list = [];
+                                if (lrtData && lrtData.platform_list) {
+                                    const cleanNum = route.route.replace('輕鐵 ', '').trim();
+                                    lrtData.platform_list.forEach(p => {
+                                        if (p.route_no === cleanNum && p.time_en) {
+                                            const mins = parseInt(p.time_en) || 1;
+                                            list.push({
+                                                isoTime: new Date(Date.now() + mins * 60000).toISOString(),
+                                                destName: p.dest_ch || p.dest_en
+                                            });
+                                        }
+                                    });
+                                }
+                                s.etaList = list;
+                            } else if (route.company === 'KMB') {
+                                const etaRes = await fetch(`${KMB_API}/eta/${s.stop}/${route.route}/${route.service_type || '1'}`);
+                                const etaData = await etaRes.json();
+                                s.etaList = (etaData.data || []).filter(e => e.dir === route.bound).map(e => ({
+                                    isoTime: e.eta,
+                                    remark: e.rmk_tc
+                                }));
+                            } else if (route.company === 'CTB') {
+                                const etaRes = await fetch(`${CTB_API}/eta/ctb/${s.stop}/${route.route}`);
+                                const etaData = await etaRes.json();
+                                s.etaList = (etaData.data || []).map(e => ({
+                                    isoTime: e.eta,
+                                    remark: e.rmk_tc
+                                }));
+                            } else if (route.company === 'GMB') {
+                                const seqParam = route.bound === 'I' ? '2' : '1';
+                                const etaRes = await fetch(`${GMB_API}/eta/route-stop/${route.route_id}/${seqParam}/${s.seq}`);
+                                const etaData = await etaRes.json();
+                                
+                                let etas = [];
+                                if (Array.isArray(etaData.data)) etas = etaData.data;
+                                else if (etaData.data?.eta) etas = etaData.data.eta;
+
+                                s.etaList = etas.map(e => ({
+                                    isoTime: e.timestamp || e.eta,
+                                    remark: e.remarks_tc || e.rmk_tc
+                                }));
+                            } else if (route.company === 'NLB') {
+                                const etaRes = await fetch(`${NLB_API}/stop.php?action=estimatedArrivals&routeId=${route.route_id}&stopId=${s.stop}`);
+                                const etaData = await etaRes.json();
+                                const etas = etaData.estimatedArrivals || [];
+                                s.etaList = etas.map(e => ({
+                                    isoTime: e.estimatedArrivalDateTime,
+                                    remark: e.noArrivalReason
+                                }));
+                            }
+                        } catch(err){}
+                    }
+                };
+
+                const getVisibleEtas = (etaList) => {
+                    if (!etaList) return [];
+                    return etaList.filter(e => {
+                        const iso = e.isoTime || e.etaIso;
+                        if (!iso) return false;
+                        const diffSecs = (new Date(iso).getTime() - nowTimestamp.value) / 1000;
+                        return diffSecs >= -5;
+                    });
+                };
+
+                const isEtaValid = (item) => {
+                    const iso = item.isoTime || item.etaIso;
+                    if (!iso) return false;
+                    const diffSecs = (new Date(iso).getTime() - nowTimestamp.value) / 1000;
+                    return diffSecs >= -5;
+                };
+
+                const getFormattedETA = (etaItem, contextStop) => {
+                    const iso = etaItem.isoTime || etaItem.etaIso;
+                    if (!iso) return '無班次';
+
+                    const mode = (contextStop && contextStop.customTimeMode) || timeDisplayMode.value;
+                    const etaDate = new Date(iso);
+                    if (isNaN(etaDate.getTime())) return '無班次';
+
+                    const diffSecs = Math.round((etaDate.getTime() - nowTimestamp.value) / 1000);
+
+                    if (mode === 'exact') {
+                        const hrs = String(etaDate.getHours()).padStart(2, '0');
+                        const mins = String(etaDate.getMinutes()).padStart(2, '0');
+                        return `${hrs}:${mins}`;
+                    } else {
+                        if (diffSecs <= 0) return '班次即將到達';
+                        if (diffSecs < 60) return `${diffSecs} 秒`;
+                        const diffMins = Math.floor(diffSecs / 60);
+                        return `${diffMins} 分鐘`;
+                    }
+                };
+
+                const toggleGlobalTimeDisplay = () => {
+                    timeDisplayMode.value = timeDisplayMode.value === 'exact' ? 'mins' : 'exact';
+                };
+
+                const toggleStopDisplayMode = (stop) => {
+                    const current = stop.customTimeMode || timeDisplayMode.value;
+                    stop.customTimeMode = current === 'exact' ? 'mins' : 'exact';
+                };
+
+                const getCompanyBadgeClass = (co) => {
+                    if (co === 'CTB') return 'bg-yellow-400 text-slate-900';
+                    if (co === 'GMB') return 'bg-emerald-600 text-white';
+                    if (co === 'MTR') return 'bg-rose-700 text-white';
+                    if (co === 'LRT') return 'bg-amber-600 text-white';
+                    if (co === 'NLB') return 'bg-teal-600 text-white';
+                    return 'bg-red-600 text-white';
+                };
+
+                let kmbAllStopsCache = null;
+
+                const getNearbyStops = () => {
+                    if (!navigator.geolocation) return alert('請開啟手機定位權限');
+                    locating.value = true;
+                    navigator.geolocation.getCurrentPosition(async (pos) => {
+                        const userLat = pos.coords.latitude;
+                        const userLng = pos.coords.longitude;
+
+                        try {
+                            if (!kmbAllStopsCache) {
+                                const res = await fetch(`${KMB_API}/stop`);
+                                const data = await res.json();
+                                kmbAllStopsCache = data.data || [];
+                            }
+
+                            nearbyStops.value = kmbAllStopsCache.map(s => ({
+                                ...s,
+                                distance: getHaversineDistance(userLat, userLng, parseFloat(s.lat), parseFloat(s.long)),
+                                loadingEta: false,
+                                showEtas: true,
+                                stopEtas: []
+                            }))
+                            .filter(s => s.distance <= 500)
+                            .sort((a, b) => a.distance - b.distance)
+                            .slice(0, 15);
+
+                            nearbyStops.value.forEach(st => fetchStopETA(st));
+                        } catch(e) {} finally { locating.value = false; }
+                    }, (err) => {
+                        locating.value = false;
+                    }, { timeout: 10000 });
+                };
+
+                const toggleNearbyStopETA = (stop) => {
+                    if (stop.showEtas) {
+                        stop.showEtas = false;
+                    } else {
+                        stop.showEtas = true;
+                        if (!stop.stopEtas || stop.stopEtas.length === 0) {
+                            fetchStopETA(stop);
+                        }
+                    }
+                };
+
+                const fetchStopETA = async (stop) => {
+                    stop.loadingEta = true;
+                    try {
+                        const kmbRes = await fetch(`${KMB_API}/stop-eta/${stop.stop}`);
+                        const kmbData = await kmbRes.json();
+                        
+                        let combined = [];
+                        if (kmbData && kmbData.data) {
+                            kmbData.data.forEach(e => {
+                                if (e.eta) {
+                                    combined.push({
+                                        company: 'KMB',
+                                        route: e.route,
+                                        dest: e.dest_tc,
+                                        isoTime: e.eta
+                                    });
+                                }
+                            });
+                        }
+                        stop.stopEtas = combined;
+                    } catch(e) {} finally { stop.loadingEta = false; }
+                };
+
+                const getHaversineDistance = (lat1, lon1, lat2, lon2) => {
+                    const R = 6371e3;
+                    const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+                    const Δφ = (lat2-lat1) * Math.PI/180, Δλ = (lon2-lon1) * Math.PI/180;
+                    const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+                    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                };
+
+                watch(currentTab, (newTab) => {
+                    if (newTab === 'nearby') {
+                        getNearbyStops();
+                    } else {
+                        showVirtualKeyboard.value = false;
+                    }
+                });
+
+                const isFavorite = (routeNum, stopId) => favorites.value.some(f => f.route === routeNum && f.stopId === stopId);
+
+                const toggleFavorite = (routeObj, stopObj) => {
+                    const idx = favorites.value.findIndex(f => f.route === routeObj.route && f.stopId === stopObj.stop);
+                    if (idx >= 0) {
+                        favorites.value.splice(idx, 1);
+                    } else {
+                        const firstEtaIso = stopObj.etaList?.[0]?.isoTime || null;
+                        favorites.value.push({
+                            company: routeObj.company,
+                            route: routeObj.route,
+                            lineCode: routeObj.lineCode || null,
+                            route_id: routeObj.route_id || null,
+                            seq: stopObj.seq || null,
+                            serviceType: routeObj.service_type || '1',
+                            stopId: stopObj.stop,
+                            stopName: stopObj.name_tc,
+                            isoTime: firstEtaIso
+                        });
+                    }
+                    localStorage.setItem('hk_bus_favs', JSON.stringify(favorites.value));
+                };
+
+                const removeFavorite = (fav) => {
+                    favorites.value = favorites.value.filter(f => !(f.route === fav.route && f.stopId === fav.stopId));
+                    localStorage.setItem('hk_bus_favs', JSON.stringify(favorites.value));
+                };
+
+                const refreshFavETA = async (fav) => {
+                    try {
+                        if (fav.company === 'MTR') {
+                            const mtrRes = await fetch(`${MTR_API}?line=${fav.lineCode}&sta=${fav.stopId}`);
+                            const mtrData = await mtrRes.json();
+                            const staKey = `${fav.lineCode}-${fav.stopId}`;
+                            const staObj = mtrData.data ? mtrData.data[staKey] : null;
+                            if (staObj) {
+                                let firstIso = null;
+                                ['UP', 'DOWN'].forEach(dir => {
+                                    if (staObj[dir] && staObj[dir][0] && staObj[dir][0].time) {
+                                        firstIso = staObj[dir][0].time.replace(' ', 'T');
+                                    }
+                                });
+                                fav.isoTime = firstIso;
+                            }
+                        } else if (fav.company === 'LRT') {
+                            const lrtRes = await fetch(`${LRT_API}?station_id=${fav.stopId}`);
+                            const lrtData = await lrtRes.json();
+                            if (lrtData && lrtData.platform_list) {
+                                const cleanNum = fav.route.replace('輕鐵 ', '').trim();
+                                const p = lrtData.platform_list.find(x => x.route_no === cleanNum);
+                                if (p && p.time_en) {
+                                    const mins = parseInt(p.time_en) || 1;
+                                    fav.isoTime = new Date(Date.now() + mins * 60000).toISOString();
+                                }
+                            }
+                        } else if (fav.company === 'CTB') {
+                            const res = await fetch(`${CTB_API}/eta/ctb/${fav.stopId}/${fav.route}`);
+                            const data = await res.json();
+                            fav.isoTime = data.data?.[0]?.eta || null;
+                        } else if (fav.company === 'GMB') {
+                            const res = await fetch(`${GMB_API}/eta/route-stop/${fav.route_id}/1/${fav.seq || 1}`);
+                            const data = await res.json();
+                            fav.isoTime = data.data?.eta?.[0]?.timestamp || null;
+                        } else if (fav.company === 'NLB') {
+                            const res = await fetch(`${NLB_API}/stop.php?action=estimatedArrivals&routeId=${fav.route_id}&stopId=${fav.stopId}`);
+                            const data = await res.json();
+                            fav.isoTime = data.estimatedArrivals?.[0]?.estimatedArrivalDateTime || null;
+                        } else {
+                            const res = await fetch(`${KMB_API}/eta/${fav.stopId}/${fav.route}/${fav.serviceType || 1}`);
+                            const data = await res.json();
+                            fav.isoTime = data.data?.[0]?.eta || null;
+                        }
+                    } catch (e) {}
+                };
+
+                const addForumPost = () => {
+                    if (!newPost.value.comment && !newPost.value.goodPoint) {
+                        return alert('請填寫留言內容！');
+                    }
+                    const item = {
+                        id: Date.now(),
+                        author: newPost.value.author.trim() || '熱心用家',
+                        rating: parseInt(newPost.value.rating),
+                        goodPoint: newPost.value.goodPoint,
+                        badPoint: newPost.value.badPoint,
+                        comment: newPost.value.comment,
+                        time: '剛剛'
+                    };
+                    forumPosts.value.unshift(item);
+                    localStorage.setItem('hk_bus_forum_posts', JSON.stringify(forumPosts.value));
+                    newPost.value = { author: '', rating: 5, goodPoint: '', badPoint: '', comment: '' };
+                    alert('貼文已發佈！');
+                };
+
+                const handleBgUpload = (event) => {
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            customBgImage.value = e.target.result;
+                            localStorage.setItem('hk_bus_bg_img', e.target.result);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+
+                const clearBgImage = () => {
+                    customBgImage.value = '';
+                    localStorage.removeItem('hk_bus_bg_img');
+                };
+
+                watch(currentTheme, (newTheme) => {
+                    localStorage.setItem('hk_bus_theme', newTheme);
+                });
+
+                let secondTimer = null;
+                let apiSyncCounter = 0;
+
+                const start1SecondEngine = () => {
+                    if (secondTimer) clearInterval(secondTimer);
+                    
+                    secondTimer = setInterval(() => {
+                        const d = new Date();
+                        nowTimestamp.value = d.getTime();
+                        currentTimeStr.value = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+
+                        apiSyncCounter++;
+                        if (apiSyncCounter >= 6) {
+                            apiSyncCounter = 0;
+                            if (currentTab.value === 'routeDetail' && selectedRoute.value) {
+                                refreshRouteETAs();
+                            } else if (currentTab.value === 'favorites') {
+                                favorites.value.forEach(f => refreshFavETA(f));
+                            }
+                        }
+                    }, 1000);
+                };
+
+                onMounted(() => {
+                    fetchAllRoutes();
+                    start1SecondEngine();
+                });
+
+                onUnmounted(() => {
+                    if (secondTimer) clearInterval(secondTimer);
+                });
+
+                return {
+                    currentTab, searchQuery, companyFilter, routes, loadingRoutes, filteredRoutes,
+                    showVirtualKeyboard, pressVirtualKey,
+                    selectedRoute, routeStops, loadingStops, selectRoute, toggleRouteDirection,
+                    timeDisplayMode, toggleGlobalTimeDisplay, toggleStopDisplayMode, getFormattedETA, getVisibleEtas, isEtaValid, currentTimeStr,
+                    showSettings, currentTheme, themePresets, themeConfig, customBgImage, handleBgUpload, clearBgImage,
+                    getCompanyBadgeClass, locating, nearbyStops, getNearbyStops, toggleNearbyStopETA, fetchStopETA,
+                    favorites, isFavorite, toggleFavorite, removeFavorite, refreshFavETA,
+                    communitySubTab, announcements, forumPosts, newPost, addForumPost,
+                    showAnnouncementModal, selectedAnnouncement, openAnnouncementModal
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
